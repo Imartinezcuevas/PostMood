@@ -29,6 +29,9 @@ class KeywordRequest(BaseModel):
     keyword: str
     limit: int = 5
 
+@app.get("/health")
+def health_check():
+    return {"status": "Ok"}
 
 @app.post("/search")
 async def search_posts(request: KeywordRequest):
