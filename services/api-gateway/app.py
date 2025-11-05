@@ -21,7 +21,7 @@ app = FastAPI(title="API Gateway")
 # ----------------------
 class SearchRequest(BaseModel):
     keyword: str
-    limit: int = 5
+    limit: int = 25
 
 # ----------------------
 # Endpoints
