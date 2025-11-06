@@ -124,7 +124,6 @@ async def search_posts(request: KeywordRequest):
     # 2. Search in reddit
     try:
         posts = []
-        conn = get_connection()
         subreddit = await reddit.subreddit("all")
 
         async for submission in subreddit.search(request.keyword, limit=request.limit):
@@ -139,7 +138,6 @@ async def search_posts(request: KeywordRequest):
                 "url": f"https://www.reddit.com{submission.permalink}"
             }
 
-            insert_post(conn, post)
             posts.append({
                 "title": post["title"],
                 "text": post["selftext"]

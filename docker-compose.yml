@@ -28,9 +28,26 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 10s
-      timeout: 5s
+      interval: 1m30s
+      timeout: 30s
       retries: 5
+      start_period: 30s
+
+  sentiment-analyzer:
+    build: ./services/sentiment-analyzer
+    ports:
+      - "8002:8002"
+    env_file:
+      - .env
+    networks:
+      - postmood-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 1m30s
+      timeout: 30s
+      retries: 5
+      start_period: 30s
 
   redis:
     image: redis:7-alpine
