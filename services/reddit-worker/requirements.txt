@@ -3,5 +3,4 @@ fastapi
 uvicorn
 python-dotenv
 pydantic
-redis[hiredis]
 psycopg2-binary
