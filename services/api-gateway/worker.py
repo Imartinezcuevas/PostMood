@@ -1,19 +1,27 @@
-import logging
 import time
 import os
 from dotenv import load_dotenv
 from redis import Redis
 from rq import Worker, Queue
+from common.logging_setup import setup_logging
+import json
 
 # ----------------------
 # Config
 # ----------------------
 load_dotenv()
-redis_host = os.getenv("REDIS_HOST", "redis")
-redis_port = int(os.getenv("REDIS_PORT", 6379))
-queue_name = os.getenv("QUEUE_NAME", "analysis")
+logger = setup_logging()
 
-logging.basicConfig(level=logging.INFO, format="[WORKER] %(asctime)s | %(message)s")
+REDIS_HOST = os.getenv("REDIS_HOST", "redis")
+REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
+QUEUE_NAME = os.getenv("QUEUE_NAME", "analysis")
+SERVICE_NAME = "analyzer-worker"
+
+logger.info(json.dumps({
+    "event": "worker_init",
+    "service": SERVICE_NAME,
+    "queue": QUEUE_NAME
+}))
 
 # ----------------------
 # Esperar a que Redis esté listo
@@ -23,10 +31,18 @@ def wait_for_redis(host, port, retries=10, delay=3):
         try:
             conn = Redis(host=host, port=port)
             conn.ping()
-            logging.info(f"Connected to Redis at {host}:{port}")
+            logger.info(json.dumps({
+                "event": "redis_connected",
+                "host": host,
+                "port": port
+            }))
             return conn
         except Exception as e:
-            logging.warning(f"Redis not ready ({e}), retrying {i+1}/{retries}...")
+            logger.warning(json.dumps({
+                "event": "redis_retry",
+                "attempt": i + 1,
+                "error": str(e)
+            }))
             time.sleep(delay)
     raise ConnectionError(f"Failed to connect to Redis after {retries} retries")
 
@@ -34,11 +50,29 @@ def wait_for_redis(host, port, retries=10, delay=3):
 # Arranque del worker
 # ----------------------
 if __name__ == "__main__":
-    redis_conn = wait_for_redis(redis_host, redis_port)
-    listen = [queue_name]
+    redis_conn = wait_for_redis(REDIS_HOST, REDIS_PORT)
+    listen = [QUEUE_NAME]
 
     queues = [Queue(name, connection=redis_conn) for name in listen]
     worker = Worker(queues=queues, connection=redis_conn)
 
-    logging.info(f"Starting RQ worker listening on queues: {listen}")
-    worker.work(with_scheduler=True)
+    logger.info(json.dumps({
+        "event": "worker_started",
+        "queues": listen,
+        "service": SERVICE_NAME
+    }))
+
+    try:
+        worker.work(with_scheduler=True)
+    except KeyboardInterrupt:
+        logger.warning(json.dumps({
+            "event": "worker_stopped",
+            "service": SERVICE_NAME
+        }))
+    except Exception as e:
+        logger.error(json.dumps({
+            "event": "worker_crashed",
+            "service": SERVICE_NAME,
+            "error": str(e)
+        }))
+        raise

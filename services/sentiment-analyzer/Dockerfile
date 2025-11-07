@@ -7,6 +7,9 @@ RUN apt-get update && apt-get install -y curl && pip install --no-cache-dir -r r
 
 COPY analyzer.py .
 
+COPY ../../common /app/common
+ENV PYTHONPATH=/app
+
 EXPOSE 8002
 
 CMD ["uvicorn", "analyzer:app", "--host", "0.0.0.0", "--port", "8002"]

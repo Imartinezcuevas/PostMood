@@ -11,6 +11,9 @@ RUN apt-get update && apt-get install -y curl && pip install --no-cache-dir -r r
 # Copy code
 COPY . .
 
+COPY ../../common /app/common
+ENV PYTHONPATH=/app
+
 # Expose port
 EXPOSE 8000
 
