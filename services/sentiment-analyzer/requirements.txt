@@ -4,3 +4,4 @@ transformers
 torch
 pydantic
 python-dotenv
+prometheus_client

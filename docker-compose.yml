@@ -1,10 +1,14 @@
 services:
   reddit-worker:
-    build: ./services/reddit-worker
+    build: 
+      context: .
+      dockerfile: ./services/reddit-worker/Dockerfile
     ports:
       - "8001:8001"
     env_file:
       - .env
+    environment:
+      - SERVICE_NAME=reddit-worker
     networks:
       - postmood-net
     restart: unless-stopped
@@ -15,7 +19,9 @@ services:
       retries: 5
 
   api-gateway:
-    build: ./services/api-gateway
+    build:
+      context: .
+      dockerfile: ./services/api-gateway/Dockerfile
     ports:
       - "8000:8000"
     env_file:
@@ -27,6 +33,8 @@ services:
         condition: service_started
     networks:
       - postmood-net
+    environment:
+      - SERVICE_NAME=api-gateway
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -36,11 +44,15 @@ services:
       start_period: 5s
 
   sentiment-analyzer:
-    build: ./services/sentiment-analyzer
+    build: 
+      context: .
+      dockerfile: ./services/sentiment-analyzer/Dockerfile
     ports:
       - "8002:8002"
     env_file:
       - .env
+    environment:
+      - SERVICE_NAME=sentiment-analyzer
     networks:
       - postmood-net
     restart: unless-stopped
@@ -61,7 +73,9 @@ services:
     restart: unless-stopped
 
   analyzer-worker:
-    build: ./services/api-gateway
+    build: 
+      context: .
+      dockerfile: ./services/api-gateway/Dockerfile
     command: ["python", "worker.py"]
     depends_on:
       redis:
@@ -72,6 +86,8 @@ services:
         condition: service_healthy
     env_file:
       - .env
+    environment:
+      - SERVICE_NAME=analyzer-worker
     networks:
       - postmood-net
     restart: unless-stopped
@@ -94,6 +110,19 @@ services:
     networks:
       - postmood-net
     restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    depends_on:
+      - api-gateway
+      - sentiment-analyzer
+      - reddit-worker
+    networks:
+      - postmood-net
 
 volumes:
   pgdata:

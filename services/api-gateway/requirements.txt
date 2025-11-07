@@ -5,3 +5,4 @@ httpx
 pydantic
 redis[hiredis]
 rq
+prometheus_client

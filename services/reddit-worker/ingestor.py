@@ -11,6 +11,7 @@ from pathlib import Path
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from common.logging_setup import setup_logging
+from monitoring.prometheus_middleware import PrometheusMiddleware, metrics_endpoint
 
 # --------------------
 # Configuración general
@@ -37,6 +38,8 @@ logger.info(json.dumps({
 }))
 
 app = FastAPI(title="Reddit Ingestor")
+app.add_middleware(PrometheusMiddleware)
+app.add_route("/metrics", metrics_endpoint)
 
 # ------------------
 # Reddit setup

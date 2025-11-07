@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from transformers import pipeline
 from dotenv import load_dotenv
 from common.logging_setup import setup_logging
+from monitoring.prometheus_middleware import PrometheusMiddleware, metrics_endpoint
 
 # -------------------
 # Config
@@ -46,6 +47,8 @@ except Exception as e:
     raise
 
 app = FastAPI(title="Sentiment Analyzer")
+app.add_middleware(PrometheusMiddleware)
+app.add_route("/metrics", metrics_endpoint)
 
 # -------------------
 # Modelos

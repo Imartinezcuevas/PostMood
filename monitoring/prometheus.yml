@@ -1,0 +1,15 @@
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: 'api-gateway'
+    static_configs:
+      - targets: ['api-gateway:8000']
+  
+  - job_name: 'sentiment-analyzer'
+    static_configs:
+      - targets: ['sentiment-analyzer:8002']
+  
+  - job_name: 'reddit-worker'
+    static_configs:
+      - targets: ['reddit-worker:8001']

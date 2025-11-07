@@ -9,6 +9,7 @@ from rq import Queue
 from rq.job import Job
 from tasks import process_search
 from common.logging_setup import setup_logging
+from monitoring.prometheus_middleware import PrometheusMiddleware, metrics_endpoint
 
 # ----------------------
 # Configuration
@@ -24,6 +25,9 @@ fastapi_logger.handlers = []
 fastapi_logger.propagate = True
 logger.info("Initializing API Gateway")
 app = FastAPI(title="API Gateway")
+
+app.add_middleware(PrometheusMiddleware)
+app.add_route("/metrics", metrics_endpoint)
 
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))

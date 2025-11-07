@@ -1,21 +1,27 @@
 # Base image
 FROM python:3.11-slim
 
-# Set workdir
+# Set working directory
 WORKDIR /app
 
-# Copy requirements and install
-COPY requirements.txt .
-RUN apt-get update && apt-get install -y curl && pip install --no-cache-dir -r requirements.txt
+# Copy and install dependencies
+COPY services/api-gateway/requirements.txt .
+RUN apt-get update && apt-get install -y --no-install-recommends curl \
+    && pip install --no-cache-dir -r requirements.txt \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Copy code
-COPY . .
+# Copy service code
+COPY services/api-gateway/ ./
 
-COPY ../../common /app/common
+# Copy shared modules
+COPY common /app/common
+COPY monitoring /app/monitoring
+
+# Set Python path so common modules can be imported
 ENV PYTHONPATH=/app
 
-# Expose port
+# Expose service port
 EXPOSE 8000
 
-# Run the app
+# Command to run the app
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
