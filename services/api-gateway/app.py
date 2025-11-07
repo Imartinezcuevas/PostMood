@@ -10,6 +10,7 @@ from rq.job import Job
 from tasks import process_search
 from common.logging_setup import setup_logging
 from monitoring.prometheus_middleware import PrometheusMiddleware, metrics_endpoint
+from fastapi.middleware.cors import CORSMiddleware
 
 # ----------------------
 # Configuration
@@ -29,6 +30,14 @@ app = FastAPI(title="API Gateway")
 app.add_middleware(PrometheusMiddleware)
 app.add_route("/metrics", metrics_endpoint)
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],  # frontend
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 REDIS_TTL = int(os.getenv("REDIS_TTL", "600").strip())
@@ -45,6 +54,42 @@ class SearchRequest(BaseModel):
     keyword: str
 
 # ----------------------
+# Helper Functions
+# ----------------------
+def process_posts_to_sentiment(posts):
+    """
+    Procesa un array de posts con labels y los convierte en la estructura
+    de sentimientos agrupados que espera el frontend.
+    """
+    sentiment_buckets = {
+        "veryNegative": [],
+        "negative": [],
+        "positive": [],
+        "veryPositive": [],
+    }
+
+    for post in posts:
+        if post["label"] == "very negative":
+            sentiment_buckets["veryNegative"].append(post)
+        elif post["label"] == "negative":
+            sentiment_buckets["negative"].append(post)
+        elif post["label"] == "positive":
+            sentiment_buckets["positive"].append(post)
+        elif post["label"] == "very positive":
+            sentiment_buckets["veryPositive"].append(post)
+
+    total = sum(len(v) for v in sentiment_buckets.values()) or 1
+    
+    processed_data = {}
+    for k, v in sentiment_buckets.items():
+        processed_data[k] = {
+            "percentage": round(len(v) / total * 100, 2),
+            "examples": [p["text"] for p in v[:5]]
+        }
+
+    return processed_data
+
+# ----------------------
 # Endpoints
 # ----------------------
 @app.get("/")
@@ -57,22 +102,20 @@ def health_check():
 
 @app.post("/search")
 def search_posts(request: SearchRequest):
-    """Encola la tarea y devuelve el ID."""
     keyword = request.keyword.strip().lower()
-    cache_key = f"reddit:{keyword}"
+    cache_key = f"analyzed:{keyword}"
     job_key = f"job:{keyword}"
 
-    # Check if results are already cached
     cached_data = redis_cache.get(cache_key)
     if cached_data:
-        logger.info(f"[CACHE HIT] Returning cached results for '{keyword}'")
+        logger.info(f"[CACHE HIT] Returning cached analyzed results for '{keyword}'")
+        cached_result = json.loads(cached_data)
         return {
             "status": "done",
             "keyword": keyword,
-            "results": json.loads(cached_data)["results"]
+            "data": cached_result["data"]
         }
     
-    # Check if there's already a job running for this keyword
     existing_job_id = redis_cache.get(job_key)
     if existing_job_id:
         logger.info(f"[QUEUE] Job already enqueued for '{keyword}' ({existing_job_id})")
@@ -90,15 +133,64 @@ def search_posts(request: SearchRequest):
 
 @app.get("/status/{job_id}")
 def get_status(job_id: str):
-    """Consulta el estado de una tarea."""
     try:
         job = Job.fetch(job_id, connection=redis_rq)
 
         if job.is_finished:
-            return {"status": "done", "result": job.result}
+            raw_result = job.result
+            
+            if "results" in raw_result:
+                processed_data = process_posts_to_sentiment(raw_result["results"])
+                
+                keyword = job.kwargs.get('keyword', job.args[0] if job.args else 'unknown')
+                
+                result = {
+                    "status": "done",
+                    "keyword": keyword,
+                    "data": processed_data
+                }
+                
+                cache_key = f"analyzed:{keyword}"
+                redis_cache.setex(cache_key, REDIS_TTL, json.dumps(result))
+                logger.info(f"[CACHE SAVE] Saved analyzed results for '{keyword}'")
+                
+                return {
+                    "status": "done",
+                    "result": result
+                }
+            else:
+                return {"status": "done", "result": raw_result}
+                
         elif job.is_failed:
             return {"status": "failed", "error": str(job.exc_info)}
         else:
             return {"status": job.get_status()}
     except Exception as e:
         raise HTTPException(status_code=404, detail=f"Job not found: {e}")
+    
+@app.post("/analyze")
+def analyze_keyword(request: SearchRequest):
+    keyword = request.keyword.strip().lower()
+    cache_key = f"analyzed:{keyword}"
+    job_key = f"job:{keyword}"
+    
+    cached_analyzed = redis_cache.get(cache_key)
+    if cached_analyzed:
+        logger.info(f"[CACHE HIT] Returning cached analyzed results for '{keyword}'")
+        return json.loads(cached_analyzed)
+    
+    existing_job_id = redis_cache.get(job_key)
+    if existing_job_id:
+        logger.info(f"[QUEUE] Job already enqueued for '{keyword}' ({existing_job_id})")
+        return {
+            "status": "queued",
+            "job_id": existing_job_id,
+            "keyword": keyword
+        }
+    
+    # No hay nada en caché, encolar el job
+    job = queue.enqueue(process_search, keyword)
+    redis_cache.setex(job_key, REDIS_TTL, job.id)
+    
+    logger.info(f"Enqueued job {job.id} for keyword '{keyword}'")
+    return {"status": "queued", "job_id": job.id, "keyword": keyword}
