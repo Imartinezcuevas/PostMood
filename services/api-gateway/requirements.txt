@@ -4,3 +4,4 @@ python-dotenv
 httpx
 pydantic
 redis[hiredis]
+rq

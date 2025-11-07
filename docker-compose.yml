@@ -23,15 +23,17 @@ services:
     depends_on:
       reddit-worker:
         condition: service_healthy
+      redis:
+        condition: service_started
     networks:
       - postmood-net
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 1m30s
-      timeout: 30s
+      interval: 10s
+      timeout: 5s
       retries: 5
-      start_period: 30s
+      start_period: 5s
 
   sentiment-analyzer:
     build: ./services/sentiment-analyzer
@@ -44,10 +46,10 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
-      interval: 1m30s
-      timeout: 30s
+      interval: 10s
+      timeout: 5s
       retries: 5
-      start_period: 30s
+      start_period: 5s
 
   redis:
     image: redis:7-alpine
@@ -57,6 +59,27 @@ services:
     networks:
       - postmood-net
     restart: unless-stopped
+
+  analyzer-worker:
+    build: ./services/api-gateway
+    command: ["python", "worker.py"]
+    depends_on:
+      redis:
+        condition: service_started
+      reddit-worker:
+        condition: service_healthy
+      sentiment-analyzer:
+        condition: service_healthy
+    env_file:
+      - .env
+    networks:
+      - postmood-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import redis; redis.Redis(host='redis', port=6379).ping()"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
 
   postgres:
     image: postgres:15
