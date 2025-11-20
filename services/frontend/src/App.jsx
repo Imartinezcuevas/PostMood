@@ -19,23 +19,21 @@ function App() {
         console.log("Polling status:", statusData);
 
         if (statusData.status === "done") {
-          // El resultado viene en statusData.result que es el objeto completo que devuelve /analyze
-          // Debemos acceder a statusData.result.data para obtener los sentimientos
-          const sentimentData = statusData.result?.data || statusData.result;
-          
-          console.log("Sentiment data from polling:", sentimentData);
+          // Cambiado: accedemos directamente a `data`
+          const sentimentData = statusData.data;
 
           const processedResults = {
-            veryNegative: sentimentData.veryNegative || { percentage: 0, examples: [] },
-            negative: sentimentData.negative || { percentage: 0, examples: [] },
-            positive: sentimentData.positive || { percentage: 0, examples: [] },
-            veryPositive: sentimentData.veryPositive || { percentage: 0, examples: [] },
+            veryNegative: sentimentData?.veryNegative || { percentage: 0, examples: [] },
+            negative: sentimentData?.negative || { percentage: 0, examples: [] },
+            positive: sentimentData?.positive || { percentage: 0, examples: [] },
+            veryPositive: sentimentData?.veryPositive || { percentage: 0, examples: [] },
           };
 
           setResults(processedResults);
           setLoading(false);
           setJobId(null);
           clearInterval(interval);
+
         } else if (statusData.status === "failed") {
           console.error("El análisis falló:", statusData.error);
           alert("El análisis falló. Por favor intenta de nuevo.");
@@ -61,33 +59,29 @@ function App() {
     setJobId(null);
 
     try {
-      const response = await fetch("http://localhost:8000/analyze", {
+      const response = await fetch("http://localhost:8000/search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ keyword }),
       });
 
-      if (!response.ok) {
-        throw new Error(`Error en la petición: ${response.status}`);
-      }
-
+      if (!response.ok) throw new Error(`Error en la petición: ${response.status}`);
       const data = await response.json();
-      console.log("Analyze response:", data);
+      console.log("Search response:", data);
 
       if (data.status === "done") {
         const sentimentData = data.data;
 
-        console.log("Sentiment data from cache:", sentimentData);
-
         const processedResults = {
-          veryNegative: sentimentData.veryNegative || { percentage: 0, examples: [] },
-          negative: sentimentData.negative || { percentage: 0, examples: [] },
-          positive: sentimentData.positive || { percentage: 0, examples: [] },
-          veryPositive: sentimentData.veryPositive || { percentage: 0, examples: [] },
+          veryNegative: sentimentData?.veryNegative || { percentage: 0, examples: [] },
+          negative: sentimentData?.negative || { percentage: 0, examples: [] },
+          positive: sentimentData?.positive || { percentage: 0, examples: [] },
+          veryPositive: sentimentData?.veryPositive || { percentage: 0, examples: [] },
         };
 
         setResults(processedResults);
         setLoading(false);
+
       } else if (data.status === "queued") {
         console.log("Job queued, starting polling for job_id:", data.job_id);
         setJobId(data.job_id);
@@ -109,8 +103,6 @@ function App() {
     setLoading(false);
     setJobId(null);
   };
-
-  console.log("Current state - results:", results, "loading:", loading, "jobId:", jobId);
 
   return (
     <>

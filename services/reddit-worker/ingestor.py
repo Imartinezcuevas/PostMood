@@ -63,47 +63,6 @@ except Exception as e:
     raise
 
 # ------------------
-# PostgreSQL setup
-# -----------------
-def get_connection():
-    try:
-        conn = psycopg2.connect(
-            host=os.getenv("POSTGRES_HOST", "postgres"),
-            dbname=os.getenv("POSTGRES_DB", "postmood"),
-            user=os.getenv("POSTGRES_USER", "postgres"),
-            password=os.getenv("POSTGRES_PASSWORD", "postgres"),
-            cursor_factory=RealDictCursor
-        )
-        return conn
-    except Exception as e:
-        logger.error(json.dumps({
-            "event": "db_connection_failed",
-            "error": str(e),
-            "service": SERVICE_NAME
-        }))
-        raise
-
-def insert_post(conn, post):
-    try:
-        with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO reddit_posts (id, title, selftext, subreddit, author, score, created_utc, url)
-                VALUES (%s,%s,%s,%s,%s,%s,to_timestamp(%s),%s)
-                ON CONFLICT (id) DO NOTHING;
-            """, (
-                post["id"], post["title"], post["selftext"], post["subreddit"],
-                post["author"], post["score"], post["created_utc"], post["url"]
-            ))
-        conn.commit()
-    except Exception as e:
-        logger.error(json.dumps({
-            "event": "db_insert_failed",
-            "error": str(e),
-            "post_id": post.get("id"),
-            "service": SERVICE_NAME
-        }))
-
-# ------------------
 # Modelos
 # -----------------
 class KeywordRequest(BaseModel):
@@ -156,6 +115,7 @@ async def search_posts(request: KeywordRequest):
                 "url": f"https://www.reddit.com{submission.permalink}"
             }
             posts.append({
+                "id": post["id"],
                 "title": post["title"],
                 "text": post["selftext"]
             })

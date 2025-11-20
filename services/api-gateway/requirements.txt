@@ -6,3 +6,4 @@ pydantic
 redis[hiredis]
 rq
 prometheus_client
+psycopg2-binary

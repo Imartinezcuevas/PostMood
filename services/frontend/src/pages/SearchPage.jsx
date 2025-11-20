@@ -13,17 +13,19 @@ const SearchPage = ({ onSearch, loading }) => {
   return (
     <div className="search-container">
       <img src={logo} alt="PostMood" className="logo" />
+
       <form onSubmit={handleSubmit} className="search-form">
         <input
           type="text"
           value={keyword}
           onChange={(e) => setKeyword(e.target.value)}
-          placeholder="Search..."
+          placeholder="Buscar..."
           className="search-input"
-          disabled={loading} // deshabilitamos input mientras carga
+          disabled={loading}
         />
+
         <button type="submit" className="search-button" disabled={loading}>
-          Analyze
+          Analizar
         </button>
       </form>
 
@@ -61,6 +63,7 @@ const SearchPage = ({ onSearch, loading }) => {
               animate={{ rotate: 360 }}
               transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
             />
+
             <p style={{ color: "#fff", fontSize: 18, fontWeight: "bold" }}>
               Analizando posts...
             </p>

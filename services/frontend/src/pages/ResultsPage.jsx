@@ -4,13 +4,15 @@ import PostCard from "../components/PostCard";
 import "../index.css";
 
 const ResultsPage = ({ results, onBack }) => {
-  if (!results) return null; // si no hay resultados, no renderizamos nada
+  if (!results) return null;
 
-  // Generar array plano de posts con su sentimiento actual
+  // Construir array plano de posts sin destruir IDs
   const posts = Object.entries(results).flatMap(([sentimentKey, data]) =>
     data.examples.map((example) => ({
-      text: example,
-      sentiment: sentimentKey, // veryNegative, negative, positive, veryPositive
+      id: example.id,
+      text: example.text,
+      sentiment: sentimentKey,
+      score: example.score,
     }))
   );
 
@@ -18,17 +20,21 @@ const ResultsPage = ({ results, onBack }) => {
     <div className="results-page">
       <div className="header-bar">
         <button className="back-button" onClick={onBack}>
-          ← Back
+          ← Volver
         </button>
       </div>
 
-      {/* Gráfico de barras de porcentajes */}
       <SentimentChart data={results} />
 
-      {/* Grid de posts con tarjetas y botones de corrección */}
       <div className="posts-grid">
-        {posts.map((post, idx) => (
-          <PostCard key={idx} text={post.text} sentiment={post.sentiment} />
+        {posts.map((post) => (
+          <PostCard
+            key={post.id}
+            id={post.id}
+            text={post.text}
+            sentiment={post.sentiment}
+            score={post.score}
+          />
         ))}
       </div>
     </div>

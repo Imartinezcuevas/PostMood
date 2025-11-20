@@ -1,6 +1,8 @@
 import os
 import json
 import logging
+import psycopg2
+from psycopg2.extras import RealDictCursor
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -13,39 +15,53 @@ from monitoring.prometheus_middleware import PrometheusMiddleware, metrics_endpo
 from fastapi.middleware.cors import CORSMiddleware
 
 # ----------------------
-# Configuration
+# Init
 # ----------------------
 load_dotenv()
 logger = setup_logging()
-uvicorn_logger = logging.getLogger("uvicorn")
-uvicorn_logger.handlers = []
-uvicorn_logger.propagate = True
 
-fastapi_logger = logging.getLogger("fastapi")
-fastapi_logger.handlers = []
-fastapi_logger.propagate = True
-logger.info("Initializing API Gateway")
 app = FastAPI(title="API Gateway")
-
 app.add_middleware(PrometheusMiddleware)
 app.add_route("/metrics", metrics_endpoint)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],  # frontend
+    allow_origins=["http://localhost:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# ----------------------
+# Env Vars
+# ----------------------
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
-REDIS_TTL = int(os.getenv("REDIS_TTL", "600").strip())
+REDIS_TTL = int(os.getenv("REDIS_TTL", "600"))
 QUEUE_NAME = os.getenv("QUEUE_NAME", "analysis")
+
+POSTGRES_HOST = os.getenv("POSTGRES_HOST", "postgres")
+POSTGRES_PORT = int(os.getenv("POSTGRES_PORT", "5432"))
+POSTGRES_DB = os.getenv("POSTGRES_DB", "postmood")
+POSTGRES_USER = os.getenv("POSTGRES_USER", "postmood")
+POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "postmood")
 
 redis_cache = Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
 redis_rq = Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=False)
 queue = Queue(QUEUE_NAME, connection=redis_rq)
+
+# ----------------------
+# DB Connection
+# ----------------------
+def get_db_conn():
+    return psycopg2.connect(
+        host=POSTGRES_HOST,
+        port=POSTGRES_PORT,
+        dbname=POSTGRES_DB,
+        user=POSTGRES_USER,
+        password=POSTGRES_PASSWORD,
+        cursor_factory=RealDictCursor
+    )
 
 # ----------------------
 # Models
@@ -53,83 +69,86 @@ queue = Queue(QUEUE_NAME, connection=redis_rq)
 class SearchRequest(BaseModel):
     keyword: str
 
+class Correction(BaseModel):
+    post_id: str
+    original_sentiment: str
+    corrected_sentiment: str
+    text: str
+    score: float | None = None
+    keyword: str | None = None
+
+
 # ----------------------
-# Helper Functions
+# Helpers
 # ----------------------
 def process_posts_to_sentiment(posts):
     """
-    Procesa un array de posts con labels y los convierte en la estructura
-    de sentimientos agrupados que espera el frontend.
+    posts llega en formato:
+    {
+        "id": str,
+        "text": str,
+        "label": str,
+        "score": float
+    }
     """
-    sentiment_buckets = {
+    buckets = {
         "veryNegative": [],
         "negative": [],
         "positive": [],
         "veryPositive": [],
     }
 
-    for post in posts:
-        if post["label"] == "very negative":
-            sentiment_buckets["veryNegative"].append(post)
-        elif post["label"] == "negative":
-            sentiment_buckets["negative"].append(post)
-        elif post["label"] == "positive":
-            sentiment_buckets["positive"].append(post)
-        elif post["label"] == "very positive":
-            sentiment_buckets["veryPositive"].append(post)
+    for p in posts:
+        label = p["label"]
+        if label == "very negative":
+            buckets["veryNegative"].append(p)
+        elif label == "negative":
+            buckets["negative"].append(p)
+        elif label == "positive":
+            buckets["positive"].append(p)
+        elif label == "very positive":
+            buckets["veryPositive"].append(p)
 
-    total = sum(len(v) for v in sentiment_buckets.values()) or 1
-    
-    processed_data = {}
-    for k, v in sentiment_buckets.items():
-        processed_data[k] = {
+    total = sum(len(v) for v in buckets.values()) or 1
+
+    return {
+        k: {
             "percentage": round(len(v) / total * 100, 2),
-            "examples": [p["text"] for p in v[:5]]
+            "examples": v[:5],   # mantienen id, text, score
         }
+        for k, v in buckets.items()
+    }
 
-    return processed_data
 
 # ----------------------
 # Endpoints
 # ----------------------
-@app.get("/")
-def read_root():
-    return {"message": "Hello from API Gateway!"}
-
-@app.get("/health")
-def health_check():
-    return {"status": "Ok"}
-
 @app.post("/search")
 def search_posts(request: SearchRequest):
     keyword = request.keyword.strip().lower()
     cache_key = f"analyzed:{keyword}"
     job_key = f"job:{keyword}"
 
-    cached_data = redis_cache.get(cache_key)
-    if cached_data:
-        logger.info(f"[CACHE HIT] Returning cached analyzed results for '{keyword}'")
-        cached_result = json.loads(cached_data)
-        return {
-            "status": "done",
-            "keyword": keyword,
-            "data": cached_result["data"]
-        }
-    
-    existing_job_id = redis_cache.get(job_key)
-    if existing_job_id:
-        logger.info(f"[QUEUE] Job already enqueued for '{keyword}' ({existing_job_id})")
-        return {
-            "status": "queued",
-            "job_id": existing_job_id,
-            "keyword": keyword
-        }
-    
+    # Check cached processed results
+    cached = redis_cache.get(cache_key)
+    if cached:
+        logger.info(f"[CACHE HIT] {keyword}")
+        payload = json.loads(cached)
+        return payload
+
+    # Check if a job already exists
+    existing_job = redis_cache.get(job_key)
+    if existing_job:
+        logger.info(f"[QUEUE] Already queued {keyword}")
+        return {"status": "queued", "job_id": existing_job, "keyword": keyword}
+
+    # Enqueue new job
     job = queue.enqueue(process_search, keyword)
     redis_cache.setex(job_key, REDIS_TTL, job.id)
 
-    logger.info(f"Enqueued job {job.id} for keyword '{keyword}'")
+    logger.info(f"Enqueued {job.id} for {keyword}")
     return {"status": "queued", "job_id": job.id, "keyword": keyword}
+
 
 @app.get("/status/{job_id}")
 def get_status(job_id: str):
@@ -137,60 +156,57 @@ def get_status(job_id: str):
         job = Job.fetch(job_id, connection=redis_rq)
 
         if job.is_finished:
-            raw_result = job.result
-            
-            if "results" in raw_result:
-                processed_data = process_posts_to_sentiment(raw_result["results"])
-                
-                keyword = job.kwargs.get('keyword', job.args[0] if job.args else 'unknown')
-                
-                result = {
+            raw = job.result
+
+            if "results" in raw:
+                processed = process_posts_to_sentiment(raw["results"])
+                keyword = job.args[0]
+
+                response = {
                     "status": "done",
                     "keyword": keyword,
-                    "data": processed_data
+                    "data": processed
                 }
-                
-                cache_key = f"analyzed:{keyword}"
-                redis_cache.setex(cache_key, REDIS_TTL, json.dumps(result))
-                logger.info(f"[CACHE SAVE] Saved analyzed results for '{keyword}'")
-                
-                return {
-                    "status": "done",
-                    "result": result
-                }
-            else:
-                return {"status": "done", "result": raw_result}
-                
-        elif job.is_failed:
+
+                redis_cache.setex(f"analyzed:{keyword}", REDIS_TTL, json.dumps(response))
+                return response
+
+            return {"status": "done", "data": raw}
+
+        if job.is_failed:
             return {"status": "failed", "error": str(job.exc_info)}
-        else:
-            return {"status": job.get_status()}
+
+        return {"status": job.get_status()}
+
+    except Exception:
+        raise HTTPException(404, f"Job {job_id} not found")
+
+
+@app.post("/correction")
+def store_correction(c: Correction):
+    try:
+        conn = get_db_conn()
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO sentiment_corrections
+                (post_id, text, original_sentiment, corrected_sentiment)
+                VALUES (%s, %s, %s, %s)
+            """, (c.post_id, c.text, c.original_sentiment,
+                  c.corrected_sentiment))
+        conn.commit()
+        conn.close()
+        return {"status": "ok"}
+
     except Exception as e:
-        raise HTTPException(status_code=404, detail=f"Job not found: {e}")
-    
-@app.post("/analyze")
-def analyze_keyword(request: SearchRequest):
-    keyword = request.keyword.strip().lower()
-    cache_key = f"analyzed:{keyword}"
-    job_key = f"job:{keyword}"
-    
-    cached_analyzed = redis_cache.get(cache_key)
-    if cached_analyzed:
-        logger.info(f"[CACHE HIT] Returning cached analyzed results for '{keyword}'")
-        return json.loads(cached_analyzed)
-    
-    existing_job_id = redis_cache.get(job_key)
-    if existing_job_id:
-        logger.info(f"[QUEUE] Job already enqueued for '{keyword}' ({existing_job_id})")
-        return {
-            "status": "queued",
-            "job_id": existing_job_id,
-            "keyword": keyword
-        }
-    
-    # No hay nada en caché, encolar el job
-    job = queue.enqueue(process_search, keyword)
-    redis_cache.setex(job_key, REDIS_TTL, job.id)
-    
-    logger.info(f"Enqueued job {job.id} for keyword '{keyword}'")
-    return {"status": "queued", "job_id": job.id, "keyword": keyword}
+        logger.error(f"[DB ERROR] {e}")
+        raise HTTPException(500, "Insert failed")
+
+
+@app.get("/")
+def root():
+    return {"message": "API Gateway running"}
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
