@@ -61,7 +61,7 @@ const PostCard = ({ id, text, sentiment, score, keyword, originalSentiment }) =>
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3 }}
     >
-      <p className="post-text">{text[:256]}</p>
+      <p className="post-text">{text}</p>
 
       {score !== undefined && (
         <p className="post-score">Sentimiento: {engToSpa[sentiment]}</p>
