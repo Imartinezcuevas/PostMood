@@ -34,7 +34,7 @@ def process_search(keyword: str):
             logger.info(json.dumps({"event": "reddit_fetched", "keyword": keyword, "posts": len(posts)}))
 
         # 2️. Llamada al sentiment-analyzer
-            texts = [f"{p['title']} {p['text']}" for p in posts]
+            texts = [p["full_text"] for p in posts]
             sentiment_resp = client.post(f"{SENTIMENT_ANALYZER_URL}/analyze", json={"posts": texts})
             sentiment_resp.raise_for_status()
             sentiments = sentiment_resp.json()["results"]
@@ -42,7 +42,23 @@ def process_search(keyword: str):
 
         # 3️. Merge de resultados
         for post, sent in zip(posts, sentiments):
-            post.update(sent)
+            post.setdefault("post_id", post.get("id"))
+            post.setdefault("source", "reddit")
+            post.setdefault("title", post.get("title", ""))
+            post.setdefault("text", post.get("text", ""))
+            post.setdefault("full_text", post.get("full_text", ""))
+            post.setdefault("url", post.get("url", ""))
+            post.setdefault("created_at", post.get("created_at", None))
+            post.setdefault("reddit_score", post.get("reddit_score", None))
+
+            label = sent.get("label") if isinstance(sent, dict) else None
+            score_val = sent.get("score") if isinstance(sent, dict) else None
+
+            post["label"] = label
+            post["original_sentiment"] = label
+            post["score"] = score_val
+
+            post["keyword"] = keyword
 
         payload = {"results": posts, "cached_at": time.time()}
 

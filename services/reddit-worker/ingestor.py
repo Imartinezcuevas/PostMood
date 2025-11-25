@@ -8,6 +8,7 @@ from pydantic import BaseModel
 import asyncpraw
 from dotenv import load_dotenv
 from pathlib import Path
+from datetime import datetime
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from common.logging_setup import setup_logging
@@ -104,25 +105,38 @@ async def search_posts(request: KeywordRequest):
         subreddit = await reddit.subreddit("all")
 
         async for submission in subreddit.search(keyword, limit=LIMIT):
+            text_content = submission.selftext
+            if hasattr(submission, "crosspost_parent_list") and submission.crosspost_parent_list:
+                text_content = submission.crosspost_parent_list[0].get("selftext", text_content)
+            
+            post_test = clean_text(text_content)
+            post_full_text = clean_text(f"{submission.title} {text_content}".strip())
             post = {
                 "id": submission.id,
+                "post_id": submission.id,
+                "source": "reddit",
                 "title": clean_text(submission.title),
-                "selftext": clean_text(submission.selftext),
+                "text": post_test,
+                "full_text": post_full_text,
                 "subreddit": str(submission.subreddit),
                 "author": str(submission.author) if submission.author else "unknown",
-                "score": submission.score,
-                "created_utc": submission.created_utc,
+                "reddit_score": submission.score,
+                "created_at": datetime.utcfromtimestamp(submission.created_utc).isoformat() + "Z",
                 "url": f"https://www.reddit.com{submission.permalink}"
             }
             posts.append({
                 "id": post["id"],
+                "post_id": post["post_id"],
+                "source": post["source"],
                 "title": post["title"],
-                "text": post["selftext"]
+                "text": post["text"],
+                "full_text": post["full_text"],
+                "url": post["url"],
+                "created_at": post["created_at"],
+                "reddit_score": post["reddit_score"],
             })
-            # Optional: store in DB
-            # conn = get_connection()
-            # insert_post(conn, post)
 
+        posts = [p for p in posts if p.get("full_text", "").strip()]
         elapsed = round(time.time() - start, 2)
         logger.info(json.dumps({
             "event": "search_complete",
@@ -131,7 +145,6 @@ async def search_posts(request: KeywordRequest):
             "elapsed": elapsed,
             "service": SERVICE_NAME
         }))
-
         return {"from_cache": False, "posts": posts}
 
     except Exception as e:

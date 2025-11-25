@@ -9,10 +9,16 @@ const ResultsPage = ({ results, onBack }) => {
   // Construir array plano de posts sin destruir IDs
   const posts = Object.entries(results).flatMap(([sentimentKey, data]) =>
     data.examples.map((example) => ({
-      id: example.id,
+      id: example.id || example.post_id,
+      post_id: example.post_id || example.id,
       text: example.text,
-      sentiment: sentimentKey,
+      title: example.title,
+      full_text: example.full_text,
+      sentiment: example.label,
+      originalSentiment: example.label,
       score: example.score,
+      keyword: example.keyword,
+      url: example.url,
     }))
   );
 
@@ -31,9 +37,11 @@ const ResultsPage = ({ results, onBack }) => {
           <PostCard
             key={post.id}
             id={post.id}
-            text={post.text}
+            text={post.full_text}
             sentiment={post.sentiment}
+            originalSentiment={post.originalSentiment}
             score={post.score}
+            keyword={post.keyword}
           />
         ))}
       </div>

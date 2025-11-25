@@ -71,26 +71,19 @@ class SearchRequest(BaseModel):
 
 class Correction(BaseModel):
     post_id: str
+    keyword: str
     original_sentiment: str
     corrected_sentiment: str
     text: str
     score: float | None = None
-    keyword: str | None = None
+
+ALLOWED_LABELS = {"very negative", "negative", "positive", "very positive"}
 
 
 # ----------------------
 # Helpers
 # ----------------------
 def process_posts_to_sentiment(posts):
-    """
-    posts llega en formato:
-    {
-        "id": str,
-        "text": str,
-        "label": str,
-        "score": float
-    }
-    """
     buckets = {
         "veryNegative": [],
         "negative": [],
@@ -98,23 +91,27 @@ def process_posts_to_sentiment(posts):
         "veryPositive": [],
     }
 
+    label_to_bucket = {
+        "very negative": "veryNegative",
+        "negative": "negative",
+        "positive": "positive",
+        "very positive": "veryPositive",
+    }
+
     for p in posts:
-        label = p["label"]
-        if label == "very negative":
-            buckets["veryNegative"].append(p)
-        elif label == "negative":
-            buckets["negative"].append(p)
-        elif label == "positive":
+        label = p.get("label", "")
+        bucket_key = label_to_bucket.get(label, None)
+        if bucket_key:
+            buckets[bucket_key].append(p)
+        else:
             buckets["positive"].append(p)
-        elif label == "very positive":
-            buckets["veryPositive"].append(p)
 
     total = sum(len(v) for v in buckets.values()) or 1
 
     return {
         k: {
             "percentage": round(len(v) / total * 100, 2),
-            "examples": v[:5],   # mantienen id, text, score
+            "examples": v[:10],
         }
         for k, v in buckets.items()
     }
@@ -184,15 +181,20 @@ def get_status(job_id: str):
 
 @app.post("/correction")
 def store_correction(c: Correction):
+    if c.original_sentiment not in ALLOWED_LABELS:
+        raise HTTPException(400, "Invalid original_sentiment")
+    if c.corrected_sentiment not in ALLOWED_LABELS:
+        raise HTTPException(400, "Invalid corrected_sentiment")
+
     try:
         conn = get_db_conn()
         with conn.cursor() as cur:
             cur.execute("""
                 INSERT INTO sentiment_corrections
-                (post_id, text, original_sentiment, corrected_sentiment)
-                VALUES (%s, %s, %s, %s)
-            """, (c.post_id, c.text, c.original_sentiment,
-                  c.corrected_sentiment))
+                (post_id, keyword, text, original_sentiment, corrected_sentiment, score, source, approved)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """, (c.post_id, c.keyword, c.text, c.original_sentiment,
+                  c.corrected_sentiment, c.score, "manual", True))
         conn.commit()
         conn.close()
         return {"status": "ok"}

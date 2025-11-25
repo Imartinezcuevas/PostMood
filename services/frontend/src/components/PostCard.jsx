@@ -9,20 +9,20 @@ const sentimentColors = {
 };
 
 const spaToEng = {
-  "Muy Negativo": "veryNegative",
+  "Muy Negativo": "very negative",
   "Negativo": "negative",
   "Positivo": "positive",
-  "Muy Positivo": "veryPositive",
+  "Muy Positivo": "very positive",
 };
 
 const engToSpa = {
-  veryNegative: "Muy Negativo",
-  negative: "Negativo",
-  positive: "Positivo",
-  veryPositive: "Muy Positivo",
+  "very negative": "Muy Negativo",
+  "negative": "Negativo",
+  "positive": "Positivo",
+  "very positive": "Muy Positivo",
 };
 
-const PostCard = ({ id, text, sentiment, score }) => {
+const PostCard = ({ id, text, sentiment, score, keyword, originalSentiment }) => {
   const [clicked, setClicked] = useState(false);
   const [selected, setSelected] = useState(null);
 
@@ -32,19 +32,24 @@ const PostCard = ({ id, text, sentiment, score }) => {
     setSelected(corrected);
 
     try {
-      await fetch("http://localhost:8000/correction", {
+      const resp = await fetch("http://localhost:8000/correction", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           post_id: id,
-          original_sentiment: sentiment,
+          keyword: keyword,
+          original_sentiment: originalSentiment,
           corrected_sentiment: corrected,
           text: text,
+          score: score
         }),
       });
+      if (!resp.ok){
+        throw new Error(`HTTP ${resp.status}`);
+      }
     } catch (err) {
       console.error("Error enviando corrección:", err);
-      setClicked(false); // permite reintentar en caso de error
+      setClicked(false);
       setSelected(null);
     }
   };
@@ -56,7 +61,7 @@ const PostCard = ({ id, text, sentiment, score }) => {
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3 }}
     >
-      <p className="post-text">{text}</p>
+      <p className="post-text">{text[:256]}</p>
 
       {score !== undefined && (
         <p className="post-score">Sentimiento: {engToSpa[sentiment]}</p>

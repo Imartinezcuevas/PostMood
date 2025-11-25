@@ -2,6 +2,7 @@ import os
 import json
 import time
 import logging
+import re
 from fastapi import FastAPI
 from pydantic import BaseModel
 from transformers import pipeline
@@ -56,6 +57,22 @@ app.add_route("/metrics", metrics_endpoint)
 class AnalyzeRequest(BaseModel):
     posts: list[str]
 
+
+def normalize_label(raw_label: str) -> str:
+    if not raw_label:
+        return "positive"
+    s = raw_label.lower().strip().replace("_", " ").replace("-", " ")
+    s = re.sub(r"\s+", " ", s)
+    if "very" in s and "positive" in s:
+        return "very positive"
+    if "very" in s and "negative" in s:
+        return "very negative"
+    if "positive" in s:
+        return "positive"
+    if "negative" in s:
+        return "negative"
+    return "positive"
+
 # -------------------
 # Endpoints
 # -------------------
@@ -78,10 +95,12 @@ async def analyze_sentiment(request: AnalyzeRequest):
 
         try:
             res = analyzer(text_clean)[0]
+            label = normalize_label(res.get("label", ""))
+            score = float(res.get("score", 0.0))
             results.append({
                 "text": text_clean,
-                "label": res["label"].lower(),
-                "score": res["score"]
+                "label": label,
+                "score": score
             })
         except Exception as e:
             logger.error(json.dumps({

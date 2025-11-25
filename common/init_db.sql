@@ -1,8 +1,17 @@
 CREATE TABLE IF NOT EXISTS sentiment_corrections (
-    id SERIAL PRIMARY KEY,
+    id BIGSERIAL PRIMARY KEY,
+
     post_id TEXT NOT NULL,
+    keyword TEXT NOT NULL,
+
+    text TEXT NOT NULL,
     original_sentiment TEXT NOT NULL,
     corrected_sentiment TEXT NOT NULL,
-    text TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT NOW()
+
+    score FLOAT,
+
+    source TEXT NOT NULL DEFAULT 'manual',
+    approved BOOLEAN NOT NULL DEFAULT TRUE,
+
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
