@@ -15,3 +15,9 @@ CREATE TABLE IF NOT EXISTS sentiment_corrections (
 
     created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS dataset_generation_log (
+    id BIGSERIAL PRIMARY KEY,
+    last_post_id BIGINT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
