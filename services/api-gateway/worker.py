@@ -6,15 +6,19 @@ from rq import Worker, Queue
 from common.logging_setup import setup_logging
 import json
 
-# ----------------------
-# Config
-# ----------------------
+# -----------------------------------------------------------
+# Environment & Logging Setup
+# -----------------------------------------------------------
+# Load environment variables and initialize structured logging.
 load_dotenv()
 logger = setup_logging()
 
+# Redis configuration for task queues
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 QUEUE_NAME = os.getenv("QUEUE_NAME", "analysis")
+
+# Worker service identifier for logging and monitoring
 SERVICE_NAME = "analyzer-worker"
 
 logger.info(json.dumps({
@@ -23,10 +27,27 @@ logger.info(json.dumps({
     "queue": QUEUE_NAME
 }))
 
-# ----------------------
-# Esperar a que Redis esté listo
-# ----------------------
+# -----------------------------------------------------------
+# Helper: Wait for Redis
+# -----------------------------------------------------------
 def wait_for_redis(host, port, retries=10, delay=3):
+    """
+    Waits for Redis to be available before starting the worker.
+    
+    This ensures the worker does not crash on startup if Redis is not yet ready.
+    
+    Args:
+        host (str): Redis host.
+        port (int): Redis port.
+        retries (int): Number of retry attempts before failing.
+        delay (int): Delay between retries in seconds.
+    
+    Returns:
+        Redis: Connected Redis instance.
+    
+    Raises:
+        ConnectionError: If Redis is unreachable after all retries.
+    """
     for i in range(retries):
         try:
             conn = Redis(host=host, port=port)
@@ -46,14 +67,18 @@ def wait_for_redis(host, port, retries=10, delay=3):
             time.sleep(delay)
     raise ConnectionError(f"Failed to connect to Redis after {retries} retries")
 
-# ----------------------
-# Arranque del worker
-# ----------------------
+# -----------------------------------------------------------
+# Worker Initialization
+# -----------------------------------------------------------
 if __name__ == "__main__":
+    # Ensure Redis is ready before starting the worker
     redis_conn = wait_for_redis(REDIS_HOST, REDIS_PORT)
-    listen = [QUEUE_NAME]
 
+    # Define the queues the worker will listen to
+    listen = [QUEUE_NAME]
     queues = [Queue(name, connection=redis_conn) for name in listen]
+
+    # Initialize the RQ worker
     worker = Worker(queues=queues, connection=redis_conn)
 
     logger.info(json.dumps({
@@ -62,7 +87,9 @@ if __name__ == "__main__":
         "service": SERVICE_NAME
     }))
 
+    # Start processing jobs from the queue
     try:
+        # with_scheduler=True enables scheduled jobs if any are added
         worker.work(with_scheduler=True)
     except KeyboardInterrupt:
         logger.warning(json.dumps({

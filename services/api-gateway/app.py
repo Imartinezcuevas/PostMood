@@ -15,15 +15,18 @@ from monitoring.prometheus_middleware import PrometheusMiddleware, metrics_endpo
 from fastapi.middleware.cors import CORSMiddleware
 
 # ----------------------
-# Init
+# Application initialization
 # ----------------------
+# Loadas environment variables from .env and sets up structured loggins.
 load_dotenv()
 logger = setup_logging()
 
+# Create the FastAPI application and attach Prometheus metrics middleware.
 app = FastAPI(title="API Gateway")
 app.add_middleware(PrometheusMiddleware)
 app.add_route("/metrics", metrics_endpoint)
 
+# Configure CORS  to allow browser access from the frontend.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173"],
@@ -32,20 +35,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ----------------------
-# Env Vars
-# ----------------------
+# ----------------------------------
+# Environment configuration
+# ----------------------------------
+# Redis environment defaults support containerized deployment.
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 REDIS_TTL = int(os.getenv("REDIS_TTL", "600"))
 QUEUE_NAME = os.getenv("QUEUE_NAME", "analysis")
 
+# Postgress environment configuration.
 POSTGRES_HOST = os.getenv("POSTGRES_HOST", "postgres")
 POSTGRES_PORT = int(os.getenv("POSTGRES_PORT", "5432"))
 POSTGRES_DB = os.getenv("POSTGRES_DB", "postmood")
 POSTGRES_USER = os.getenv("POSTGRES_USER", "postmood")
 POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "postmood")
 
+# Redis clients: one for cache (string responses), one for RQ.
 redis_cache = Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
 redis_rq = Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=False)
 queue = Queue(QUEUE_NAME, connection=redis_rq)
@@ -54,6 +60,10 @@ queue = Queue(QUEUE_NAME, connection=redis_rq)
 # DB Connection
 # ----------------------
 def get_db_conn():
+    """
+    Establishes a new PostgreSQL connection using RealDictCursor to return rows as dicts.
+    Caller is responsible for closing the connection.
+    """
     return psycopg2.connect(
         host=POSTGRES_HOST,
         port=POSTGRES_PORT,
@@ -64,12 +74,17 @@ def get_db_conn():
     )
 
 # ----------------------
-# Models
+# Request/response models
 # ----------------------
 class SearchRequest(BaseModel):
+    """Incoming paiload for keyword search request."""
     keyword: str
 
 class Correction(BaseModel):
+    """
+    Model for user-provided sentiment corrections.
+    Score is optional as manual corrections may omit confidence.
+    """
     post_id: str
     keyword: str
     original_sentiment: str
@@ -77,13 +92,18 @@ class Correction(BaseModel):
     text: str
     score: float | None = None
 
+# Allowed sentiment labels coming from the classifier.
 ALLOWED_LABELS = {"very negative", "negative", "positive", "very positive"}
 
 
 # ----------------------
-# Helpers
+# Helper functions
 # ----------------------
 def process_posts_to_sentiment(posts):
+    """
+    Aggregates sentiment-labeled posts into predefined buckets and computes percentage distribution.
+    Returns both distribution and sample examples (up to 10 per bucket).
+    """
     buckets = {
         "veryNegative": [],
         "negative": [],
@@ -98,12 +118,14 @@ def process_posts_to_sentiment(posts):
         "very positive": "veryPositive",
     }
 
+    # Assign posts into buckets; defaults to positive if label is unknown.
     for p in posts:
         label = p.get("label", "")
         bucket_key = label_to_bucket.get(label, None)
         if bucket_key:
             buckets[bucket_key].append(p)
         else:
+            #Fallback: unknown labels are treated as positive.
             buckets["positive"].append(p)
 
     total = sum(len(v) for v in buckets.values()) or 1
@@ -118,28 +140,34 @@ def process_posts_to_sentiment(posts):
 
 
 # ----------------------
-# Endpoints
+# API endpoints
 # ----------------------
 @app.post("/search")
 def search_posts(request: SearchRequest):
+    """
+    Initiates a sentiment analysis job for the given keyword.
+    - Returns cached results if available.
+    - Prevents duplicate jobs by storing job IDs in Redis.
+    - Enqueues a new job when necessary.
+    """
     keyword = request.keyword.strip().lower()
     cache_key = f"analyzed:{keyword}"
     job_key = f"job:{keyword}"
 
-    # Check cached processed results
+    # 1. Serve cached result if available.
     cached = redis_cache.get(cache_key)
     if cached:
         logger.info(f"[CACHE HIT] {keyword}")
         payload = json.loads(cached)
         return payload
 
-    # Check if a job already exists
+    # 2. Avoid duplicate jobs via Redis lock.
     existing_job = redis_cache.get(job_key)
     if existing_job:
         logger.info(f"[QUEUE] Already queued {keyword}")
         return {"status": "queued", "job_id": existing_job, "keyword": keyword}
 
-    # Enqueue new job
+    # 3. Enqueue new job
     job = queue.enqueue(process_search, keyword)
     redis_cache.setex(job_key, REDIS_TTL, job.id)
 
@@ -149,12 +177,19 @@ def search_posts(request: SearchRequest):
 
 @app.get("/status/{job_id}")
 def get_status(job_id: str):
+    """
+    Retrieves the execution status of an RQ job and post.processes resutls:
+    - On success: transforms raw classifier output into sentiment buckets.
+    - On failure: exposes error information.
+    - On unknown ID: returns HTTP 404.
+    """
     try:
         job = Job.fetch(job_id, connection=redis_rq)
 
         if job.is_finished:
             raw = job.result
 
+            #If results follow the expected structure, post-process them.
             if "results" in raw:
                 processed = process_posts_to_sentiment(raw["results"])
                 keyword = job.args[0]
@@ -165,9 +200,10 @@ def get_status(job_id: str):
                     "data": processed
                 }
 
+                # Cache processed payload for future requests.
                 redis_cache.setex(f"analyzed:{keyword}", REDIS_TTL, json.dumps(response))
                 return response
-
+            # Fallback: return raw output untouched.
             return {"status": "done", "data": raw}
 
         if job.is_failed:
@@ -176,11 +212,17 @@ def get_status(job_id: str):
         return {"status": job.get_status()}
 
     except Exception:
+        # Invalid job IDs
         raise HTTPException(404, f"Job {job_id} not found")
 
 
 @app.post("/correction")
 def store_correction(c: Correction):
+    """
+    Stores a user-submitted sentiment correction.
+    Validates labels and inserts the record into PostgreSQL.
+    """
+    # Input validation against allowed labels.
     if c.original_sentiment not in ALLOWED_LABELS:
         raise HTTPException(400, "Invalid original_sentiment")
     if c.corrected_sentiment not in ALLOWED_LABELS:
@@ -206,9 +248,11 @@ def store_correction(c: Correction):
 
 @app.get("/")
 def root():
+    """Root endpoint used for availability checks."""
     return {"message": "API Gateway running"}
 
 
 @app.get("/health")
 def health():
+    """Simple liveness probe used for container orchetration."""
     return {"status": "ok"}

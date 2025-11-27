@@ -6,19 +6,45 @@ from dotenv import load_dotenv
 from redis import Redis
 from common.logging_setup import setup_logging
 
+# -----------------------------------------------------------
+# Environment & Logging
+# -----------------------------------------------------------
+# Load environment variables from .env and initialize structured logging.
 load_dotenv()
 logger = setup_logging()
 logger.info("Initializing tasks worker")
 
+# Service URLs for worker orchestration
 REDDIT_WORKER_URL = os.getenv("REDDIT_WORKER_URL", "http://reddit-worker:8001")
 SENTIMENT_ANALYZER_URL = os.getenv("SENTIMENT_ANALYZER_URL", "http://sentiment-analyzer:8002")
+
+# Redis configuration for caching task results
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 REDIS_TTL = int(os.getenv("REDIS_TTL", 600))
 
-
+# -----------------------------------------------------------
+# Background Task
+# -----------------------------------------------------------
 def process_search(keyword: str):
-    """Tarea ejecutada en background (por el worker)."""
+    """
+    Executes a background task for analyzing Reddit posts related to a keyword.
+    
+    Steps:
+    1. Fetch posts from reddit-worker microservice.
+    2. Send posts to sentiment-analyzer microservice.
+    3. Merge sentiment results into posts.
+    4. Cache the combined results in Redis for future requests.
+    
+    Args:
+        keyword (str): Search keyword.
+    
+    Returns:
+        dict: Aggregated posts with sentiment labels and metadata.
+    
+    Raises:
+        Exception: Any network or processing error is logged and re-raised.
+    """
     redis = Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
     cache_key = f"reddit:{keyword}"
 
@@ -26,21 +52,21 @@ def process_search(keyword: str):
         start = time.time()
         logger.info(json.dumps({"event": "task_started", "keyword": keyword}))
 
-        # 1️. Llamada al reddit-worker
+        # 1️. Fetch posts from reddit-worker
         with httpx.Client(timeout=httpx.Timeout(60.0)) as client:
             reddit_resp = client.post(f"{REDDIT_WORKER_URL}/search", json={"keyword": keyword})
             reddit_resp.raise_for_status()
             posts = reddit_resp.json()["posts"]
             logger.info(json.dumps({"event": "reddit_fetched", "keyword": keyword, "posts": len(posts)}))
 
-        # 2️. Llamada al sentiment-analyzer
+        # 2️. Analyze sentiment for each post
             texts = [p["full_text"] for p in posts]
             sentiment_resp = client.post(f"{SENTIMENT_ANALYZER_URL}/analyze", json={"posts": texts})
             sentiment_resp.raise_for_status()
             sentiments = sentiment_resp.json()["results"]
             logger.info(json.dumps({"event": "sentiment_done", "keyword": keyword, "results": len(sentiments)}))
 
-        # 3️. Merge de resultados
+        # 3️. Merge sentiment results into original posts
         for post, sent in zip(posts, sentiments):
             post.setdefault("post_id", post.get("id"))
             post.setdefault("source", "reddit")
@@ -60,9 +86,10 @@ def process_search(keyword: str):
 
             post["keyword"] = keyword
 
+        # 4. Cache results
         payload = {"results": posts, "cached_at": time.time()}
-
         redis.setex(cache_key, REDIS_TTL, json.dumps(payload))
+
         elapsed = time.time() - start
         logger.info(json.dumps({
             "event": "task_completed",
@@ -73,6 +100,7 @@ def process_search(keyword: str):
         return payload
 
     except Exception as e:
+        # Log and propagate errors for monitoring & retries
         logger.error(json.dumps({
             "event": "task_failed",
             "keyword": keyword,
@@ -81,4 +109,5 @@ def process_search(keyword: str):
         raise
 
     finally:
+        # Ensure Redis connection is always closed
         redis.close()
