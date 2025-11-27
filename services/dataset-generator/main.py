@@ -73,7 +73,7 @@ def generate_dataset():
                 if not text:
                     continue
                 label = r.get('corrected_sentiment') or r.get('original_sentiment')
-                dataset_rows.append({"text": text, "label": label, "post_id": r.get('post_id'), "keyword": r.get('keyword')})
+                dataset_rows.append({"text": text, "label": label})
                 if rid > max_id:
                     max_id = rid
 
@@ -89,7 +89,7 @@ def generate_dataset():
             filepath = os.path.join(OUTPUT_DIR, filename)
 
             with open(filepath, "w", newline="", encoding="utf-8") as f:
-                writer = csv.DictWriter(f, fieldnames=["text", "label", "post_id", "keyword"])
+                writer = csv.DictWriter(f, fieldnames=["text", "label"])
                 writer.writeheader()
                 writer.writerows(dataset_rows)
 

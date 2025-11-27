@@ -2,11 +2,15 @@
 from airflow import DAG
 from airflow.sensors.python import PythonSensor
 from airflow.providers.docker.operators.docker import DockerOperator
+from airflow.operators.bash import BashOperator
 from airflow.utils.dates import days_ago
 from docker.types import Mount
 from datetime import timedelta
 import logging
 import os
+
+project_root = os.getenv("PROJECT_ROOT", '/opt/dataset-generator')
+
 
 default_args = {
     "owner": "postmood",
@@ -66,8 +70,25 @@ with DAG(
         network_mode='postmood_postmood-net',
         mount_tmp_dir=False,
         mounts=[
-            Mount(source='dataset_output', target='/app/output', type='volume')
+            Mount(source='postmood_dataset_output', target='/app/output', type='volume')
         ]
     )
 
-    wait_for_50 >> generate_dataset
+    
+    copy_to_local = BashOperator(
+        task_id='copy_to_local',
+        bash_command=f'''
+        docker run --rm \
+        -v postmood_dataset_output:/data \
+        -v "{project_root}/services/dataset-generator/output":/backup \
+        alpine sh -c "
+            echo '=== Buscando dataset más reciente ===' && \
+            latest=$(ls -t /data/dataset_*.csv | head -n 1) && \
+            echo \"Archivo más reciente: \$latest\" && \
+            cp -v \"\$latest\" /backup/ && \
+            echo '✓ Dataset copiado exitosamente'
+        "
+        '''
+    )
+
+    wait_for_50 >> generate_dataset >> copy_to_local

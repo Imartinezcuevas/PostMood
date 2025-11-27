@@ -167,6 +167,7 @@ services:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: "postgresql+psycopg2://postmood:postmood@postgres:5432/postmood"
       AIRFLOW__CORE__FERNET_KEY: "some_random_key"
       AIRFLOW__WEBSERVER__SECRET_KEY: "supersecret"
+      PROJECT_ROOT: ${PROJECT_ROOT}
     depends_on:
       postgres:
         condition: service_healthy
@@ -191,12 +192,14 @@ services:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: "postgresql+psycopg2://postmood:postmood@postgres:5432/postmood"
       AIRFLOW__CORE__FERNET_KEY: "some_random_key"
       AIRFLOW__WEBSERVER__SECRET_KEY: "supersecret"
+      PROJECT_ROOT: ${PROJECT_ROOT}
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
       - ./airflow/plugins:/opt/airflow/plugins
       - /var/run/docker.sock:/var/run/docker.sock
       - ./services/dataset-generator:/opt/dataset-generator
+      - ./services/dataset-generator/output:/opt/dataset-generator/output
     depends_on:
       airflow-init:
         condition: service_completed_successfully
@@ -218,12 +221,14 @@ services:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: "postgresql+psycopg2://postmood:postmood@postgres:5432/postmood"
       AIRFLOW__CORE__FERNET_KEY: "some_random_key"
       AIRFLOW__WEBSERVER__SECRET_KEY: "supersecret"
+      PROJECT_ROOT: ${PROJECT_ROOT}
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
       - ./airflow/plugins:/opt/airflow/plugins
       - /var/run/docker.sock:/var/run/docker.sock
       - ./services/dataset-generator:/opt/dataset-generator
+      - ./services/dataset-generator/output:/opt/dataset-generator/output
     depends_on:
       airflow-init:
         condition: service_completed_successfully
