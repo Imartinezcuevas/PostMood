@@ -10,9 +10,10 @@ from dotenv import load_dotenv
 from common.logging_setup import setup_logging
 from monitoring.prometheus_middleware import PrometheusMiddleware, metrics_endpoint
 
-# -------------------
-# Config
-# -----------------
+# ----------------------
+# Application initialization
+# ----------------------
+# Loads environment variables from .env and sets up structured loggins.
 load_dotenv()
 logger = setup_logging()
 uvicorn_logger = logging.getLogger("uvicorn")
@@ -23,9 +24,11 @@ fastapi_logger = logging.getLogger("fastapi")
 fastapi_logger.handlers = []
 fastapi_logger.propagate = True
 
+# Service constants
 MODEL_NAME = os.getenv("MODEL_NAME", "tabularisai/multilingual-sentiment-analysis")
 SERVICE_NAME = "sentiment-analyzer"
 
+# Load and initialize the sentiment analysis model
 logger.info(json.dumps({
     "event": "model_loading",
     "model": MODEL_NAME,
@@ -47,18 +50,35 @@ except Exception as e:
     }))
     raise
 
+# Initialize FastAPI application and Prometheus monitoring
 app = FastAPI(title="Sentiment Analyzer")
 app.add_middleware(PrometheusMiddleware)
 app.add_route("/metrics", metrics_endpoint)
 
 # -------------------
-# Modelos
+# Data Models
 # -------------------
 class AnalyzeRequest(BaseModel):
+    """
+    Model for sentiment analysis requests.
+
+    Attributes:
+        posts (list[str]): List of text strings to analyze.
+    """
     posts: list[str]
 
 
 def normalize_label(raw_label: str) -> str:
+    """
+    Normalize raw sentiment labels returned by the model into a consistent set:
+    'very positive', 'positive', 'negative', 'very negative'.
+
+    Args:
+        raw_label (str): Raw label from the model output.
+
+    Returns:
+        str: Normalized sentiment label.
+    """
     if not raw_label:
         return "positive"
     s = raw_label.lower().strip().replace("_", " ").replace("-", " ")
@@ -74,21 +94,40 @@ def normalize_label(raw_label: str) -> str:
     return "positive"
 
 # -------------------
-# Endpoints
+# API Endpoints
 # -------------------
 @app.get("/health")
 def health_check():
+    """
+    Health check endpoint for the sentiment analyzer service.
+    """
     return {"status": "ok"}
 
 
 @app.post("/analyze")
 async def analyze_sentiment(request: AnalyzeRequest):
+    """
+    Analyze a batch of posts for sentiment.
+
+    Steps:
+        1. Preprocess and truncate text to 512 characters.
+        2. Use the Hugging Face pipeline to predict sentiment.
+        3. Normalize model labels to consistent format.
+        4. Return text, sentiment label, and score.
+
+    Args:
+        request (AnalyzeRequest): Request payload containing list of posts.
+
+    Returns:
+        dict: Analysis results for each post.
+    """
     start = time.time()
     results = []
 
     for text in request.posts:
         text_clean = text.strip()[:512]
 
+        # Skip empty or whitespace-only text
         if not text_clean:
             results.append({"text": text, "label": "neutral", "score": 0.0})
             continue
