@@ -14,12 +14,12 @@ from psycopg2.extras import RealDictCursor
 from common.logging_setup import setup_logging
 from monitoring.prometheus_middleware import PrometheusMiddleware, metrics_endpoint
 
-# --------------------
-# Configuración general
-# -------------------
+# ----------------------
+# Application initialization
+# ----------------------
+# Loads environment variables from .env and sets up structured loggins.
 env_path = Path(__file__).resolve().parent.parent / ".env"
 load_dotenv(dotenv_path=env_path)
-
 logger = setup_logging()
 uvicorn_logger = logging.getLogger("uvicorn")
 uvicorn_logger.handlers = []
@@ -29,6 +29,7 @@ fastapi_logger = logging.getLogger("fastapi")
 fastapi_logger.handlers = []
 fastapi_logger.propagate = True
 
+# Service constants
 SERVICE_NAME = "reddit-ingestor"
 LIMIT = int(os.getenv("LIMIT", 50))
 
@@ -38,13 +39,14 @@ logger.info(json.dumps({
     "limit": LIMIT
 }))
 
+# Initialize FastAPI application and Prometheus monitoring
 app = FastAPI(title="Reddit Ingestor")
 app.add_middleware(PrometheusMiddleware)
 app.add_route("/metrics", metrics_endpoint)
 
 # ------------------
-# Reddit setup
-# -----------------
+# Reddit API Setup
+# ------------------
 try:
     reddit = asyncpraw.Reddit(
         client_id=os.getenv("REDDIT_CLIENT_ID"),
@@ -64,15 +66,31 @@ except Exception as e:
     raise
 
 # ------------------
-# Modelos
-# -----------------
+# Data Models
+# ------------------
 class KeywordRequest(BaseModel):
+    """
+    Model for incoming search requests.
+
+    Attributes:
+        keyword (str): The keyword to search for on Reddit.
+    """
     keyword: str
 
 # -------------------
-# Limpieza de texto
+# Text Cleaning Helper
 # -------------------
 def clean_text(text: str):
+    """
+    Normalize and clean text content by removing URLs, mentions, extra spaces,
+    line breaks, and lowercasing.
+
+    Args:
+        text (str): Raw text content.
+
+    Returns:
+        str: Cleaned and normalized text.
+    """
     if not text:
         return ""
     text = re.sub(r"http\S+", "", text)
@@ -82,14 +100,32 @@ def clean_text(text: str):
     return text.lower()
 
 # ------------------
-# Endpoints
+# API Endpoints
 # -----------------
 @app.get("/health")
 def health_check():
+    """
+    Health check endpoint for the Reddit ingestor service.
+    """
     return {"status": "ok"}
 
 @app.post("/search")
 async def search_posts(request: KeywordRequest):
+    """
+    Search Reddit posts containing the specified keyword.
+
+    Steps:
+        1. Fetch posts from Reddit 'all' subreddit using asyncpraw.
+        2. Clean and normalize text content.
+        3. Prepare standardized post objects for downstream processing.
+        4. Return posts in a structured format.
+
+    Args:
+        request (KeywordRequest): Search keyword payload.
+
+    Returns:
+        dict: Search results containing posts and metadata, or error message.
+    """
     start = time.time()
     keyword = request.keyword.strip()
 
@@ -104,6 +140,7 @@ async def search_posts(request: KeywordRequest):
         posts = []
         subreddit = await reddit.subreddit("all")
 
+        # Iterate through search results asynchronously
         async for submission in subreddit.search(keyword, limit=LIMIT):
             text_content = submission.selftext
             if hasattr(submission, "crosspost_parent_list") and submission.crosspost_parent_list:
@@ -124,6 +161,8 @@ async def search_posts(request: KeywordRequest):
                 "created_at": datetime.utcfromtimestamp(submission.created_utc).isoformat() + "Z",
                 "url": f"https://www.reddit.com{submission.permalink}"
             }
+
+            # Keep only essential fields for response
             posts.append({
                 "id": post["id"],
                 "post_id": post["post_id"],
@@ -136,7 +175,9 @@ async def search_posts(request: KeywordRequest):
                 "reddit_score": post["reddit_score"],
             })
 
+        # Filter out empty posts
         posts = [p for p in posts if p.get("full_text", "").strip()]
+
         elapsed = round(time.time() - start, 2)
         logger.info(json.dumps({
             "event": "search_complete",
