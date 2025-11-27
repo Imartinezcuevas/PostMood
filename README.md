@@ -7,9 +7,8 @@ It allows a user to search any keyword and instantly get:
 - Feedback-based corrections that flow into a retraining dataset
 
 ---
-## **Demo screenshots**
-<img src="docs/images/SearchPage.png" width="800">
-<img src="docs/images/resultsPage.png" width="800">
+## **Demo**
+<img src="docs/images/animated.gif" width="800">
 
 ---
 
